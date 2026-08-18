@@ -1,0 +1,82 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+# ===== PyInstaller =====
+*.spec.bak
+ExamBroadcaster_onefile.spec
+ExamBroadcaster_onedir.spec
+
+# ===== 项目运行时产物（敏感/本地化数据，不得提交） =====
+# 凭据与用户设置（含加密 API Key）
+credentials.json
+settings.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 日志、备份、缓存、离线语音生成产物
+logs/
+backups/
+audio_cache/
+sound/*.mp3
+sound/*.wav
+sound/*.ogg
+# 保留 sound 目录结构占位符
+!sound/.gitkeep
+
+# ===== IDE / 编辑器 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== 测试 / 类型检查 =====
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ===== 分发产物 =====
+dist/
+*.exe
+!picture/app_icon.ico
