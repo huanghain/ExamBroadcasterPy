@@ -113,7 +113,7 @@ python build.py --debug
 
 ## 协议
 
-<!-- LICENSE 占位：根据选择补充 MIT / Apache-2.0 / GPL-3.0 等 -->
+本项目采用 [MIT License](./LICENSE) 开源。
 
 ## 致谢
 
