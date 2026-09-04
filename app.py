@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import (
-    QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel,
+    QApplication, QDialog, QVBoxLayout, QLabel,
     QProgressBar, QPushButton, QTextEdit,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
@@ -38,6 +38,7 @@ from ui.main_window import MainWindow
 from ui.widgets.api_key_dialog import ApiKeyDialog
 from ui.pages.splash_screen import SplashScreen
 from ui.styles import GLOBAL_STYLESHEET
+from ui.widgets.toast import show_toast, ask_confirm
 from config import (
     DEFAULT_VOLUME, DB_PATH, SETTINGS_PATH, APP_VERSION, APP_DISPLAY_NAME,
     SOUND_DIR, BELL_FILE_NAME,
@@ -141,12 +142,11 @@ def check_api_key_on_startup(ctx: dict) -> bool:
             ctx["ai_service"] = ZhipuAIService(new_key)
         return True
     else:
-        # 用户跳过
-        QMessageBox.information(
-            None, "提示",
-            "您尚未配置 AI API Key。\n"
-            "AI 相关功能（AI 添加考试）将暂时禁用。\n\n"
-            "您可以在 [设置] 页面随时配置。"
+        # 用户跳过：无系统音的 toast 提示（不触发系统提示音）
+        show_toast(
+            None, "尚未配置 AI API Key，AI 功能暂时禁用。\n"
+                  "您可在 [设置] 页面随时配置。",
+            "warning", duration=3600,
         )
         return False
 
@@ -341,11 +341,14 @@ def main():
         splash.set_step_error("database", f"数据库初始化失败: {e}")
         app.processEvents()
         logger.critical("数据库初始化失败: %s", e)
-        QMessageBox.critical(
+        # 致命错误也用无系统音弹窗（退出前允许用户读到错误信息）
+        ask_confirm(
             None, "致命错误",
             f"数据库初始化失败，程序无法继续运行。\n\n错误详情: {e}\n\n"
             f"数据库路径: {DB_PATH}\n"
-            "请检查磁盘空间和目录权限。"
+            "请检查磁盘空间和目录权限。",
+            yes_text="退出",
+            no_text=None,
         )
         sys.exit(1)
     app.processEvents()
@@ -376,6 +379,9 @@ def main():
         app.setStyleSheet(GLOBAL_STYLESHEET + DARK_STYLESHEET)
         logger.info("已应用深色模式")
     ctx["dark_mode"] = user_settings.get("dark_mode", False)
+
+    # 考试时段自动弹窗静音开关（默认开启）
+    ctx["popup_mute_enabled"] = user_settings.get("popup_mute_enabled", True)
 
     if network_ok:
         splash.set_step_done("network", "网络连接正常")
@@ -436,7 +442,8 @@ def main():
         loop = scheduler._get_event_loop()
         try:
             loop.run_until_complete(
-                tts.speak(node.broadcast_text, node.voice_name, node.speed_percent)
+                tts.speak(node.broadcast_text, node.voice_name, node.speed_percent,
+                          force=True)  # 考试广播：全屏模式也必须播报
             )
         except Exception as e:
             logger.exception("广播播放失败: %s", e)
@@ -466,7 +473,7 @@ def main():
                 if not bell_path.exists():
                     logger.warning("铃声文件不存在，跳过铃声: %s", bell_path)
                     return False
-                loop.run_until_complete(tts.play_file(str(bell_path)))
+                loop.run_until_complete(tts.play_file(str(bell_path), force=True))
                 return True
             except Exception as e:
                 logger.warning("铃声播放失败: %s", e)
@@ -478,7 +485,7 @@ def main():
                 _play_bell()
 
             if custom_audio_path:
-                loop.run_until_complete(tts.play_file(custom_audio_path))
+                loop.run_until_complete(tts.play_file(custom_audio_path, force=True))
             elif ctx.get("offline_mode"):
                 offline_audio = ctx.get("offline_audio")
                 offline_path = None
@@ -490,11 +497,11 @@ def main():
                             if offline_path:
                                 break
                 if offline_path:
-                    loop.run_until_complete(tts.play_file(offline_path))
+                    loop.run_until_complete(tts.play_file(offline_path, force=True))
                 else:
                     logger.warning("离线模式: 未找到本地音频，跳过播报: %s", reminder_text)
             else:
-                loop.run_until_complete(tts.speak(reminder_text))
+                loop.run_until_complete(tts.speak(reminder_text, force=True))
         except Exception as e:
             logger.exception("提醒播放失败: %s", e)
 

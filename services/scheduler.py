@@ -9,9 +9,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from apscheduler.schedulers.qt import QtScheduler
-from apscheduler.triggers.date import DateTrigger
-
+# apscheduler 延迟到 start() 时才导入/构造（见 start），降低模块 import 阶段开销
 from services.database import get_session
 from models.schedule_task import ScheduleTask, ScheduleTaskStatus
 from models.exam import Exam
@@ -33,7 +31,9 @@ class SchedulerService(QObject):
 
     def __init__(self):
         super().__init__()
-        self._scheduler = QtScheduler()
+        # apscheduler 的 QtScheduler 需要运行中的 QApplication，且体积较大，
+        # 故延迟到 start() 时再创建，避免模块导入阶段即加载整个 apscheduler。
+        self._scheduler = None
         self._is_running = False
         self._broadcast_callback: Callable | None = None
         self._reminder_callback: Callable | None = None
@@ -64,13 +64,15 @@ class SchedulerService(QObject):
 
     def start(self):
         if not self._is_running:
+            from apscheduler.schedulers.qt import QtScheduler
+            self._scheduler = QtScheduler()
             self._scheduler.start()
             self._is_running = True
             logger.info("调度引擎已启动")
             self.scheduler_started.emit()
 
     def stop(self):
-        if self._is_running:
+        if self._is_running and self._scheduler is not None:
             self._scheduler.shutdown(wait=False)
             self._is_running = False
             # 关闭持久事件循环
@@ -88,6 +90,7 @@ class SchedulerService(QObject):
         if not self._is_running:
             return
 
+        from apscheduler.triggers.date import DateTrigger
         session = get_session()
         try:
             # 重新查询，获得绑定到当前 session 的对象
@@ -137,6 +140,7 @@ class SchedulerService(QObject):
 
     def _schedule_reminders(self, exam: Exam, session=None):
         """为考试调度所有提醒任务（支持多次提醒）"""
+        from apscheduler.triggers.date import DateTrigger
         close_session = session is None
         if session is None:
             session = get_session()

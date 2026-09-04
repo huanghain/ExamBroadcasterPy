@@ -2,13 +2,14 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QTextEdit, QFormLayout,
-    QLineEdit, QGroupBox, QMessageBox, QSplitter,
+    QLineEdit, QGroupBox, QSplitter,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 from services.database import get_session
 from models.template import BroadcastTemplate, BroadcastNode
+from ui.widgets.toast import show_toast, ask_confirm
 
 
 class TemplatePage(QWidget):
@@ -161,11 +162,10 @@ class TemplatePage(QWidget):
             # 检查是否已有预置模板
             existing = session.query(BroadcastTemplate).filter_by(is_preset=True).count()
             if existing > 0:
-                reply = QMessageBox.question(
+                if not ask_confirm(
                     self, "确认", "已存在预置模板，是否重新初始化？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
+                    yes_text="重新初始化", no_text="取消",
+                ):
                     return
                 # 删除旧的预置模板
                 session.query(BroadcastTemplate).filter_by(is_preset=True).delete()
@@ -191,10 +191,10 @@ class TemplatePage(QWidget):
                     session.add(node)
 
             session.commit()
-            QMessageBox.information(self, "成功", f"已初始化 {len(self.PRESET_TEMPLATES)} 个预置模板")
+            show_toast(self, f"已初始化 {len(self.PRESET_TEMPLATES)} 个预置模板", "success")
             self.refresh()
         except Exception as e:
             session.rollback()
-            QMessageBox.critical(self, "错误", str(e))
+            show_toast(self, f"初始化失败：{e}", "error")
         finally:
             session.close()

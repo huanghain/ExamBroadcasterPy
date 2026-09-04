@@ -7,7 +7,7 @@ PyInstaller 打包配置文件
 import sys
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # ---- 基础配置 ----
 APP_NAME = "ExamBroadcaster"
@@ -26,9 +26,21 @@ try:
 except ImportError:
     PYQT6_DIR = None
 
-# ---- 收集 Qt 插件 ----
-def _collect_qt_plugins(subdir):
-    """收集 Qt 插件目录"""
+# ---- 收集 Qt 插件（按需裁剪，显著缩小体积） ----
+# 只保留程序实际用到的插件类别与文件，避免全量打包：
+#   platforms    → 仅当前操作系统原生平台插件
+#   imageformats → 仅 jpg/png/ico/gif（启动屏背景、应用图标加载）
+#   styles       → 仅原生窗口样式
+#   multimedia   → QMediaPlayer 音频播放所需后端（保留，体积最大的部分）
+# 主动剔除 iconengines(svg)、tls(QtNetwork)、sqldrivers 等未使用插件。
+_PLATFORM_PLUGIN = {
+    "win32":   ["qwindows"],
+    "darwin":  ["libqcocoa.dylib"],
+    "linux":   ["libqxcb", "libqoffscreen", "libqminimal"],
+}.get(sys.platform, ["libqxcb", "libqoffscreen", "libqminimal"])
+
+def _collect_qt_plugins(subdir, allowed=None):
+    """收集 Qt 插件目录；allowed 为文件名前缀集合，None 表示全收"""
     if PYQT6_DIR is None:
         return []
     plugin_dir = PYQT6_DIR / "Qt6" / "plugins" / subdir
@@ -36,8 +48,13 @@ def _collect_qt_plugins(subdir):
         return []
     binaries = []
     for f in plugin_dir.rglob("*"):
-        if f.is_file() and (f.suffix in (".dll", ".so", ".dylib") or not f.suffix):
-            binaries.append((str(f), str(Path("PyQt6/Qt6/plugins") / subdir)))
+        if not f.is_file():
+            continue
+        if f.suffix not in (".dll", ".so", ".dylib") and f.suffix != "":
+            continue
+        if allowed is not None and not any(f.name.startswith(p) for p in allowed):
+            continue
+        binaries.append((str(f), str(Path("PyQt6/Qt6/plugins") / subdir)))
     return binaries
 
 # ---- 收集 Qt 多媒体后端 ----
@@ -62,28 +79,42 @@ def _collect_qt_multimedia():
 # PyInstaller 6.x 用 exec() 执行 spec，SPECPATH 即为 spec 文件所在目录（项目根）。
 _SPEC_DIR = os.path.abspath(SPECPATH) if 'SPECPATH' in dir() else os.path.dirname(os.path.abspath(ENTRY_SCRIPT))
 
-# ---- 收集 edge_tts 和 aiohttp 的全部子模块/数据/二进制 ----
+# ---- 收集边缘 TTS / aiohttp / charset_normalizer 的子模块 ----
+# 三者均为纯 Python 包，其二进制/数据已由 Analysis 依据 import 自动发现，
+# 无需 collect_all 全量收集，改用 collect_submodules 兜底动态 import，体积更小。
 _edge_datas, edge_binaries, edge_hidden = [], [], []
 _aiohttp_datas, aiohttp_binaries, aiohttp_hidden = [], [], []
 _cs_datas, cs_binaries, cs_hidden = [], [], []
 try:
-    edge_datas, edge_binaries, edge_hidden = collect_all('edge_tts')
-    print(f"[spec] collect_all('edge_tts'): {len(edge_datas)} datas, {len(edge_binaries)} binaries, {len(edge_hidden)} hiddenimports")
+    edge_hidden = collect_submodules('edge_tts')
+    print(f"[spec] collect_submodules('edge_tts'): {len(edge_hidden)} modules")
 except Exception as e:
-    print(f"[spec] collect_all('edge_tts') 失败: {e}")
+    print(f"[spec] collect_submodules('edge_tts') 失败: {e}")
 
 try:
-    aiohttp_datas, aiohttp_binaries, aiohttp_hidden = collect_all('aiohttp')
-    print(f"[spec] collect_all('aiohttp'): {len(aiohttp_datas)} datas, {len(aiohttp_binaries)} binaries, {len(aiohttp_hidden)} hiddenimports")
+    aiohttp_hidden = collect_submodules('aiohttp')
+    print(f"[spec] collect_submodules('aiohttp'): {len(aiohttp_hidden)} modules")
 except Exception as e:
-    print(f"[spec] collect_all('aiohttp') 失败: {e}")
+    print(f"[spec] collect_submodules('aiohttp') 失败: {e}")
 
 # charset_normalizer — aiohttp/requests 的字符编码检测依赖（打包后可能缺失）
 try:
-    _cs_datas, cs_binaries, cs_hidden = collect_all('charset_normalizer')
-    print(f"[spec] collect_all('charset_normalizer'): {len(_cs_datas)} datas, {len(cs_binaries)} binaries, {len(cs_hidden)} hiddenimports")
+    cs_hidden = collect_submodules('charset_normalizer')
+    print(f"[spec] collect_submodules('charset_normalizer'): {len(cs_hidden)} modules")
 except Exception as e:
-    print(f"[spec] collect_all('charset_normalizer') 失败: {e}")
+    print(f"[spec] collect_submodules('charset_normalizer') 失败: {e}")
+
+# ---- cryptography（AES 加密）----
+# cryptography 内含 Rust 编译的二进制扩展（cryptography.hazmat.bindings._rust 等），
+# collect_submodules 只能收集纯 Python 模块，无法收集这些二进制，导致打包后
+# 运行期解密（如删除 API Key 后重启）报 ModuleNotFoundError。
+# 故改用 collect_all 把 datas/binaries/hiddenimports 一并纳入。
+_cr_datas, _cr_binaries, _cr_hidden = [], [], []
+try:
+    _cr_datas, _cr_binaries, _cr_hidden = collect_all('cryptography')
+    print(f"[spec] collect_all('cryptography'): {len(_cr_hidden)} modules, {len(_cr_binaries)} binaries")
+except Exception as e:
+    print(f"[spec] collect_all('cryptography') 失败: {e}")
 
 # ---- 离线语音文件夹（仅当存在时打包） ----
 _sound_datas = []
@@ -108,17 +139,13 @@ a = Analysis(
     [ENTRY_SCRIPT],
     pathex=[_SPEC_DIR],
     binaries=(
-        _collect_qt_plugins("platforms") +
-        _collect_qt_plugins("styles") +
-        _collect_qt_plugins("imageformats") +
-        _collect_qt_plugins("iconengines") +
-        _collect_qt_plugins("tls") +
+        _collect_qt_plugins("platforms", _PLATFORM_PLUGIN) +
+        _collect_qt_plugins("styles", ["qwindowsvistastyle"]) +
+        _collect_qt_plugins("imageformats", ["qjpeg", "qpng", "qico", "qgif"]) +
         _collect_qt_multimedia() +
-        edge_binaries +
-        aiohttp_binaries +
-        cs_binaries
+        _cr_binaries
     ),
-    datas=_sound_datas + _picture_datas + edge_datas + aiohttp_datas + _cs_datas,
+    datas=_sound_datas + _picture_datas + _cr_datas,
     hiddenimports=[
         # edge-tts 依赖（动态 import，PyInstaller 无法自动检测）
         "edge_tts",
@@ -194,9 +221,16 @@ a = Analysis(
         # httpx（AI API 调用）
         "httpx",
         "anyio",
-    ] + edge_hidden + aiohttp_hidden + cs_hidden,
+    ] + edge_hidden + aiohttp_hidden + cs_hidden + _cr_hidden,
     hookspath=[],
-    hooksconfig={},
+    # 限制 PyInstaller PyQt6 钩子默认全量收集的 Qt 插件类别，
+    # 仅保留实际使用到的（platforms/multimedia），配合上方手动按需收集，
+    # 大幅减少 Qt 插件体积（sql 驱动、tls、iconengines 等不再被打进包）。
+    hooksconfig={
+        "PyQt6": {
+            "plugins": ["platforms", "multimedia", "mediaservice"],
+        },
+    },
     runtime_hooks=[],
     excludes=[
         # 排除不需要的模块减小体积
@@ -207,12 +241,27 @@ a = Analysis(
         "scipy",
         "PIL",
         "PyQt5",
+        "PyQt5.QtCore",
         "pytest",
         "setuptools",
         "pip",
+        # 未使用的标准库（调试/诊断/邮件/编解码等），安全排除
+        "unittest",
+        "doctest",
+        "pdb",
+        "pydoc",
+        "idlelib",
+        "lib2to3",
+        "turtledemo",
+        # 注意：不要排除 email —— aiohttp / openpyxl/http.cookiejar 等会隐式
+        # import email.utils，强制排除会在运行期触发 ImportError。
+        "pstats",
+        "cProfile",
     ],
     noarchive=False,
-    optimize=0,
+    # optimize=2：比 1 额外剥离字节码中的 docstring（相当于 python -OO），
+    # 进一步缩小 PYZ 体积与加载时间，且不影响任何功能。
+    optimize=2,
 )
 
 # ---- 构建参数 ----

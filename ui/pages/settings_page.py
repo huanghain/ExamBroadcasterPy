@@ -2,10 +2,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QGroupBox, QFormLayout, QCheckBox, QSlider,
-    QMessageBox, QApplication, QDialog, QTextEdit, QProgressBar,
+    QApplication, QDialog, QTextEdit, QProgressBar,
     QSizePolicy, QScrollArea, QFrame,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 from services.credential_store import SecureCredentialStore
 from services.encryption import AesEncryptionService
@@ -15,6 +15,7 @@ from services.offline_audio import (
     check_edge_tts_available, check_offline_audio_status,
 )
 from ui.widgets.api_key_dialog import ApiKeyDialog
+from ui.widgets.toast import show_toast, ask_confirm
 from ui.styles import GLOBAL_STYLESHEET, DARK_STYLESHEET
 from config import APP_DATA_DIR, SOUND_DIR, SETTINGS_PATH
 import json
@@ -286,8 +287,8 @@ class SettingsPage(QWidget):
         offline_info.setTextFormat(Qt.TextFormat.PlainText)
         offline_layout.addWidget(offline_info)
 
-        # 生成状态
-        self._offline_status = QLabel(self._get_offline_audio_status())
+        # 生成状态（文本延后到 _deferred_load 填充，避免构建期同步扫描磁盘）
+        self._offline_status = QLabel()
         self._offline_status.setObjectName("offlineStatus")
         offline_layout.addWidget(self._offline_status)
 
@@ -331,6 +332,31 @@ class SettingsPage(QWidget):
 
         layout.addWidget(theme_group)
 
+        # 考试时段自动弹窗静音
+        mute_group = QGroupBox("考试时段")
+        mute_layout = QVBoxLayout(mute_group)
+        mute_layout.setSpacing(12)
+
+        mute_info = QLabel(
+            "考前30分钟至考后5分钟内自动将软件弹窗静音，保障考试过程安静。"
+            "考试提醒播报不受影响，仍正常发声。"
+        )
+        mute_info.setWordWrap(True)
+        mute_info.setObjectName("infoLabel")
+        mute_info.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        mute_info.setMinimumHeight(50)
+        mute_info.setTextFormat(Qt.TextFormat.PlainText)
+        mute_layout.addWidget(mute_info)
+
+        is_mute_on = self._ctx.get("popup_mute_enabled", True)
+        self._popup_mute_switch = QCheckBox("考试时段自动弹窗静音")
+        self._popup_mute_switch.setObjectName("popupMuteSwitch")
+        self._popup_mute_switch.setChecked(is_mute_on)
+        self._popup_mute_switch.toggled.connect(self._on_popup_mute_toggled)
+        mute_layout.addWidget(self._popup_mute_switch)
+
+        layout.addWidget(mute_group)
+
         layout.addStretch()
 
         scroll.setWidget(container)
@@ -338,7 +364,14 @@ class SettingsPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
 
-        # 初始加载状态
+        # 初始状态填充延后到构建完成后的首帧：_update_status 涉及 AES 解密读取
+        # API Key、_get_offline_audio_status 涉及文件系统扫描，把这些 I/O 从
+        # 同步构建路径剥离，进一步缩短页面构建耗时（真正感知上的"无感"）。
+        QTimer.singleShot(0, self._deferred_load)
+
+    def _deferred_load(self):
+        """构建完成后的首批填充：仅做轻量 I/O，不阻塞任何一次渲染。"""
+        self._offline_status.setText(self._get_offline_audio_status())
         self._update_status()
 
     def _update_status(self):
@@ -366,27 +399,32 @@ class SettingsPage(QWidget):
         dlg = ApiKeyDialog(self._credential_store, self)
         if dlg.exec() and dlg.was_accepted:
             self._update_status()
-            QMessageBox.information(self, "成功", "API Key 已更新！\nAI 功能已启用。")
+            show_toast(self, "API Key 已更新，AI 功能已启用。", "success")
 
     def _delete_key(self):
         """删除 API Key 并重启软件"""
-        reply = QMessageBox.question(
+        if not ask_confirm(
             self, "确认删除",
             "确定要删除已保存的 API Key 吗？\n\n删除后 AI 功能将被禁用，软件将自动重启。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._credential_store.clear_api_key()
-            QMessageBox.information(self, "已删除", "API Key 已删除，软件将重启。")
-            # 重启软件
-            import sys, os
-            QApplication.quit()
-            os.execl(sys.executable, sys.executable, *sys.argv)
+            yes_text="删除",
+            no_text="取消",
+        ):
+            return
+        self._credential_store.clear_api_key()
+        show_toast(self, "API Key 已删除，软件将重启。", "success", duration=1600)
+        # 稍作停留让 toast 可见，再重启软件
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(1600, self._perform_restart)
+
+    def _perform_restart(self):
+        import sys, os
+        QApplication.quit()
+        os.execl(sys.executable, sys.executable, *sys.argv)
 
     def _test_connection(self):
         api_key = self._credential_store.get_api_key()
         if not api_key:
-            QMessageBox.warning(self, "提示", "请先配置 API Key")
+            show_toast(self, "请先配置 API Key", "warning")
             return
 
         self._test_btn.setEnabled(False)
@@ -430,11 +468,13 @@ class SettingsPage(QWidget):
         # 预检查 edge_tts 是否可用
         available, msg = check_edge_tts_available()
         if not available:
-            QMessageBox.critical(
+            ask_confirm(
                 self, "无法生成离线语音",
                 f"edge-tts 不可用，无法生成离线语音。\n\n原因: {msg}\n\n"
                 "请确保已安装 edge-tts 和 aiohttp:\n"
-                "  pip install edge-tts aiohttp"
+                "  pip install edge-tts aiohttp",
+                yes_text="知道了",
+                no_text=None,
             )
             return
 
@@ -486,6 +526,10 @@ class SettingsPage(QWidget):
         except Exception:
             pass
         settings["dark_mode"] = enabled
+        # 同步内容容器实心底色，保证整页淡入起始帧透出的是新主题底色而非黑
+        win = self.window()
+        if win is not None and hasattr(win, "_apply_page_container_bg"):
+            win._apply_page_container_bg(enabled)
         try:
             SETTINGS_PATH.write_text(
                 json.dumps(settings, ensure_ascii=False, indent=2),
@@ -493,6 +537,28 @@ class SettingsPage(QWidget):
             )
         except Exception:
             pass
+
+    def _on_popup_mute_toggled(self, enabled: bool):
+        """考试时段自动弹窗静音开关处理：持久化并即时应用"""
+        self._ctx["popup_mute_enabled"] = enabled
+        settings = {}
+        try:
+            if SETTINGS_PATH.exists():
+                settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        settings["popup_mute_enabled"] = enabled
+        try:
+            SETTINGS_PATH.write_text(
+                json.dumps(settings, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        # 通知主窗口立即按新开关重新检测
+        window = self.window()
+        if hasattr(window, "_on_popup_mute_setting_changed"):
+            window._on_popup_mute_setting_changed()
 
     def refresh(self):
         self._update_status()

@@ -10,6 +10,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtCore import QUrl, QObject, pyqtSignal
 
 from config import DEFAULT_VOICE, AUDIO_CACHE_DIR
+from services import audio_gate
 
 
 class TTSService(QObject):
@@ -32,14 +33,23 @@ class TTSService(QObject):
         return self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
 
     async def speak(self, text: str, voice: str = DEFAULT_VOICE,
-                    speed: int = 0) -> None:
-        """将文本合成为语音并播放"""
-        temp_path = await self._synthesize(text, voice, speed)
-        self._play_file(temp_path)
+                    speed: int = 0, force: bool = False) -> None:
+        """将文本合成为语音并播放。
 
-    async def play_file(self, file_path: str) -> None:
-        """播放指定的音频文件（用于自定义语音）"""
-        self._play_file(file_path)
+        force=True 时即使处于全屏音频抑制状态仍播放（用于考试提醒/广播）。
+        """
+        if audio_gate.is_suppressed() and not force:
+            self.finished.emit()  # 被抑制时不实际播放，发 finished 让调用方收尾
+            return
+        temp_path = await self._synthesize(text, voice, speed)
+        self._play_file(temp_path, force=force)
+
+    async def play_file(self, file_path: str, force: bool = False) -> None:
+        """播放指定的音频文件（用于自定义语音，force 语义同 speak）"""
+        if audio_gate.is_suppressed() and not force:
+            self.finished.emit()
+            return
+        self._play_file(file_path, force=force)
 
     async def synthesize_to_file(self, text: str, output_path: str,
                                   voice: str = DEFAULT_VOICE, speed: int = 0) -> str:
@@ -71,8 +81,11 @@ class TTSService(QObject):
         self._current_temp_file = output_path
         return output_path
 
-    def _play_file(self, file_path: str):
-        """播放音频文件"""
+    def _play_file(self, file_path: str, force: bool = False):
+        """播放音频文件（全屏抑制且非 force 时跳过）"""
+        if audio_gate.is_suppressed() and not force:
+            self.finished.emit()
+            return
         url = QUrl.fromLocalFile(file_path)
         self._player.setSource(url)
         self._player.play()

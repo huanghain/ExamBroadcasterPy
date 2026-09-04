@@ -7,7 +7,6 @@
 """
 import json
 import re
-import httpx
 from typing import Optional
 from datetime import datetime
 
@@ -133,7 +132,16 @@ class ZhipuAIService:
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._validator = AIResponseValidator()
-        self._client = httpx.Client(timeout=30.0)
+        # httpx 客户端延迟到首次调用时创建（见 _ensure_client），
+        # 避免应用启动即加载 httpx/anyio/httpcore 等，加快启动并降低常驻内存。
+        self._client = None
+
+    def _ensure_client(self):
+        """按需创建 httpx 客户端（首次 API 调用时才导入并建连）"""
+        if self._client is None:
+            import httpx
+            self._client = httpx.Client(timeout=30.0)
+        return self._client
 
     def __del__(self):
         """析构时确保关闭 httpx 客户端"""
@@ -160,9 +168,11 @@ class ZhipuAIService:
             body["tool_choice"] = "auto"
 
         last_error = None
+        client = self._ensure_client()
+        import httpx
         for attempt in range(max_retries + 1):
             try:
-                resp = self._client.post(
+                resp = client.post(
                     f"{self._base_url}/chat/completions",
                     headers=self._headers(),
                     json=body,
@@ -360,5 +370,5 @@ class ZhipuAIService:
 
     def close(self):
         """关闭 httpx 客户端，释放连接"""
-        if self._client and not self._client.is_closed:
+        if self._client is not None and not self._client.is_closed:
             self._client.close()

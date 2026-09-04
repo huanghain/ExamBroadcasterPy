@@ -14,7 +14,8 @@ from pathlib import Path
 APP_NAME = "ExamBroadcaster"
 
 # 版本号（统一在此处维护，各界面显示处引用此常量）
-APP_VERSION = "v2.1.3"
+# v2.2.3：设置页无感加载优化（空闲预构建 + 状态延后填充，保留切页动画）
+APP_VERSION = "v2.2.3"
 APP_DISPLAY_NAME = "考试智能广播系统"
 
 if platform.system() == "Windows":

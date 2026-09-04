@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit,
     QDateEdit, QTimeEdit, QTabWidget, QFileDialog, QTextEdit,
-    QFormLayout, QMessageBox, QSizePolicy, QSpinBox, QCheckBox,
+    QFormLayout, QSizePolicy, QSpinBox, QCheckBox,
     QGroupBox, QFrame, QDialog, QDialogButtonBox, QGridLayout,
     QSplitter, QScrollArea, QComboBox,
 )
@@ -23,6 +23,7 @@ from services.exam_service import ExamService
 from services.ai_service import ZhipuAIService
 from services.file_parser import FileParserService
 from services.scheduler import DEFAULT_TTS_TEXTS
+from ui.widgets.toast import show_toast, ask_confirm
 
 
 # ── 后台线程 ──────────────────────────────────────────
@@ -83,6 +84,14 @@ class ReminderPreviewWorker(QThread):
     def _play_audio(self, file_path: str):
         """在主线程播放音频文件"""
         from PyQt6.QtWidgets import QApplication
+        # 全屏广播模式下屏蔽非考试提醒声音（试听音频不播放）
+        from services import audio_gate
+        if audio_gate.is_suppressed():
+            try:
+                Path(file_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return
         QApplication.processEvents()
         # 使用 QMediaPlayer 播放
         player = QMediaPlayer()
@@ -225,12 +234,12 @@ class ExamEditDialog(QDialog):
     def _validate_and_accept(self):
         """验证并确认"""
         if not self._subject_input.text().strip():
-            QMessageBox.warning(self, "提示", "请输入科目名称")
+            show_toast(self, "请输入科目名称", "warning")
             return
         start = self._start_time_input.time()
         end = self._end_time_input.time()
         if start >= end:
-            QMessageBox.warning(self, "提示", "开始时间必须早于结束时间")
+            show_toast(self, "开始时间必须早于结束时间", "warning")
             return
         self.accept()
 
@@ -995,12 +1004,12 @@ class AddExamDialog(QDialog):
 
     def _validate_and_accept(self):
         if not self._subject_input.text().strip():
-            QMessageBox.warning(self, "提示", "请输入考试名称")
+            show_toast(self, "请输入考试名称", "warning")
             return
         s = self._start_time_input.time()
         e = self._end_time_input.time()
         if s >= e:
-            QMessageBox.warning(self, "提示", "开始时间必须早于结束时间")
+            show_toast(self, "开始时间必须早于结束时间", "warning")
             return
         self.accept()
 
@@ -1797,23 +1806,31 @@ class ExamPage(QWidget):
             status = "启用" if new_enabled else "禁用"
             self._status.setText(f"提醒已{status}")
         except Exception as e:
-            QMessageBox.critical(self, "操作失败", str(e))
+            show_toast(self, f"操作失败：{e}", "error")
 
     def _add_reminder_for_selected(self):
+        # 未选中或没有任何考试时：仅给静音的文字提示，绝不打开任何
+        # 会触发试听/播报声的界面（不进入编辑弹窗、不播放音频）。
         if not self._selected_exam_id:
-            QMessageBox.information(self, "提示", "请先从左侧选择一场考试")
+            has_exam = bool(getattr(self, "_exam_cards", None))
+            msg = (
+                "当前没有任何考试，无法添加提醒。请先添加考试。"
+                if not has_exam
+                else "请先从左侧选择一场考试，再为它添加提醒。"
+            )
+            show_toast(self, msg, "warning", duration=3600)
             return
         self._edit_reminder(self._selected_exam_id)
 
     def _delete_single_reminder(self, reminder_id: int):
-        reply = QMessageBox.question(
+        if not ask_confirm(
             self, "确认删除", "确定要删除这条提醒吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._exam_svc.delete_reminder(reminder_id)
-            self.refresh()
-            self._status.setText("已删除提醒")
+            yes_text="删除", no_text="取消",
+        ):
+            return
+        self._exam_svc.delete_reminder(reminder_id)
+        self.refresh()
+        self._status.setText("已删除提醒")
 
     # ── 添加考试 ──────────────────────────────────────
 
@@ -1832,13 +1849,12 @@ class ExamPage(QWidget):
             )
             if conflicts:
                 names = "、".join([c.subject for c in conflicts])
-                reply = QMessageBox.warning(
+                if not ask_confirm(
                     self, "时间冲突检测",
                     f"该时间段与以下考试存在冲突：\n{names}\n\n是否仍然添加？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
+                    yes_text="仍然添加",
+                    no_text="取消",
+                ):
                     return
 
             exam = Exam(
@@ -1855,7 +1871,7 @@ class ExamPage(QWidget):
             try:
                 self._exam_svc.add(exam)
             except Exception as e:
-                QMessageBox.critical(self, "添加失败", f"保存考试失败：\n{e}")
+                show_toast(self, f"保存考试失败：{e}", "error")
                 return
 
             if reminders_data:
@@ -1875,7 +1891,7 @@ class ExamPage(QWidget):
 
     def _open_ai_dialog(self):
         if not self._ai_svc:
-            QMessageBox.warning(self, "提示", "未配置 AI API Key，请在设置页面配置")
+            show_toast(self, "未配置 AI API Key，请在设置页面配置", "warning")
             return
 
         dlg = AIDialog(self)
@@ -1888,14 +1904,14 @@ class ExamPage(QWidget):
                 lambda row: self._on_ai_result_static(row, reminders)
             )
             self._ai_worker.error.connect(
-                lambda e: QMessageBox.critical(self, "AI 解析失败", e)
+                lambda e: show_toast(self, f"AI 解析失败：{e}", "error")
             )
             self._ai_worker.start()
 
     def _on_ai_result_static(self, row: ParsedExamRow, reminders: list[dict]):
         if row.has_missing_fields:
             missing = ", ".join(row.get_missing_field_names())
-            QMessageBox.warning(self, "解析不完整", f"缺失字段: {missing}\n请手动补充")
+            show_toast(self, f"解析不完整，缺失字段：{missing}，请手动补充", "warning", duration=3600)
             return
 
         exam = Exam(
@@ -1939,7 +1955,7 @@ class ExamPage(QWidget):
             rows = list(reader)
 
             if not rows:
-                QMessageBox.warning(self, "提示", "文件为空")
+                show_toast(self, "导入文件为空", "warning")
                 return
 
             # 解析表头，建立列索引
@@ -1992,7 +2008,7 @@ class ExamPage(QWidget):
                                  (f"，跳过 {skipped} 行" if skipped else ""))
             self.refresh()
         except Exception as e:
-            QMessageBox.critical(self, "导入失败", str(e))
+            show_toast(self, f"导入失败：{e}", "error")
 
     def _build_column_map(self, header: list[str]) -> dict:
         """根据表头建立列名 → 列索引的映射"""
@@ -2231,9 +2247,9 @@ class ExamPage(QWidget):
                     ])
 
             self._status.setText(f"已导出 {len(exams)} 场考试")
-            QMessageBox.information(self, "导出成功", f"已导出 {len(exams)} 场考试到:\n{path}")
+            show_toast(self, f"已导出 {len(exams)} 场考试到:\n{path}", "success", duration=3600)
         except Exception as e:
-            QMessageBox.critical(self, "导出失败", str(e))
+            show_toast(self, f"导出失败：{e}", "error")
 
     # ── 编辑考试信息 ──────────────────────────────────
 
@@ -2253,13 +2269,12 @@ class ExamPage(QWidget):
             )
             if conflicts:
                 names = "、".join([c.subject for c in conflicts])
-                reply = QMessageBox.warning(
+                if not ask_confirm(
                     self, "时间冲突检测",
                     f"修改后的时间段与以下考试存在冲突：\n{names}\n\n是否仍然保存？",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
+                    yes_text="仍然保存",
+                    no_text="取消",
+                ):
                     return
 
             exam.subject = data["subject"]
@@ -2271,7 +2286,7 @@ class ExamPage(QWidget):
             try:
                 self._exam_svc.update(exam)
             except Exception as e:
-                QMessageBox.critical(self, "更新失败", f"保存考试信息失败：\n{e}")
+                show_toast(self, f"保存考试信息失败：{e}", "error")
                 return
 
             if self._scheduler:
@@ -2333,7 +2348,7 @@ class ExamPage(QWidget):
                     custom_tts_text=data["custom_tts_text"],
                 )
             except Exception as e:
-                QMessageBox.critical(self, "更新失败", f"保存提醒失败：\n{e}")
+                show_toast(self, f"保存提醒失败：{e}", "error")
                 return
 
             if self._scheduler:
@@ -2353,17 +2368,17 @@ class ExamPage(QWidget):
         exam = self._exam_svc.get_by_id(exam_id)
         name = exam.subject if exam else "未知"
 
-        reply = QMessageBox.question(
+        if not ask_confirm(
             self, "确认删除",
             f"确定要删除 [{name}] 吗？\n关联的提醒任务也会一并清除。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            if self._selected_exam_id == exam_id:
-                self._selected_exam_id = None
-            self._exam_svc.delete(exam_id)
-            self.refresh()
-            self._status.setText(f"已删除 [{name}]")
+            yes_text="删除", no_text="取消",
+        ):
+            return
+        if self._selected_exam_id == exam_id:
+            self._selected_exam_id = None
+        self._exam_svc.delete(exam_id)
+        self.refresh()
+        self._status.setText(f"已删除 [{name}]")
 
     def _on_offline_mode_changed(self, is_offline: bool):
         """离线模式切换：禁用/启用 AI 按钮和导入按钮"""
@@ -2433,7 +2448,7 @@ class AIDialog(QDialog):
 
     def _validate(self):
         if not self._ai_input.toPlainText().strip():
-            QMessageBox.warning(self, "提示", "请输入考试描述")
+            show_toast(self, "请输入考试描述", "warning")
             return
         self.accept()
 

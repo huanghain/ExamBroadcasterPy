@@ -7,6 +7,7 @@ GLOBAL_STYLESHEET = """
 
 /* ===== 全局 ===== */
 QMainWindow { background-color: #F4F6F9; }
+#centralWidget { background-color: #F4F6F9; }
 QWidget {
     font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
     font-size: 11px;
@@ -53,10 +54,60 @@ QPushButton#titleBarCloseBtn {
 QPushButton#titleBarCloseBtn:hover {
     background: #EF4444; color: #FFFFFF;
 }
+QPushButton#titleBarFullscreenBtn {
+    font-size: 11px; border: 1px solid #C7D2FE; background: #EEF2FF;
+    color: #4F6EF7; min-width: 64px; min-height: 20px; padding: 0 8px;
+    border-radius: 4px; margin-right: 6px; font-weight: 600;
+}
+QPushButton#titleBarFullscreenBtn:hover {
+    background: #E0E7FF; border-color: #A5B4FC;
+}
 QLabel#statusLabel {
     font-size: 11px; color: #64748B;
     min-height: 20px; padding: 0 4px;
 }
+/* 全屏模式：无声提示层（键盘屏蔽/进入退出的浮动提示，不发声） */
+#fullscreenTip {
+    background-color: rgba(30, 41, 59, 0.92);
+    color: #FFFFFF; font-size: 13px; font-weight: 600;
+    border-radius: 8px; padding: 12px 20px;
+}
+/* 全屏模式：退出确认对话框（自定义 QDialog，避免系统提示音） */
+QDialog#fullscreenConfirmDlg {
+    background-color: #FFFFFF; border: 1px solid #E2E8F0;
+    border-radius: 8px;
+}
+QLabel#fullscreenConfirmMsg {
+    font-size: 13px; color: #1E293B; font-weight: 600;
+}
+QLabel#fullscreenConfirmHint {
+    font-size: 11px; color: #64748B;
+}
+/* 无声自绘 Toast（不产生任何系统提示音） */
+#toast {
+    background-color: rgba(24, 32, 48, 0.96);
+    border-radius: 8px;
+}
+QLabel#toastText {
+    color: #FFFFFF; font-size: 12px;
+}
+QLabel#toastIcon {
+    font-size: 13px; font-weight: bold;
+}
+QLabel#toastIcon[kind="info"] { color: #93C5FD; }
+QLabel#toastIcon[kind="success"] { color: #4ADE80; }
+QLabel#toastIcon[kind="warning"] { color: #FBBF24; }
+QLabel#toastIcon[kind="error"] { color: #F87171; }
+QPushButton#primaryBtn {
+    background: #4F6EF7; color: #FFFFFF; border: none; border-radius: 4px;
+    padding: 5px 12px; font-size: 12px; font-weight: 600;
+}
+QPushButton#primaryBtn:hover { background: #4338CA; }
+QPushButton#cancelBtn {
+    background: #F1F5F9; color: #334155; border: 1px solid #E2E8F0;
+    border-radius: 4px; padding: 5px 12px; font-size: 12px;
+}
+QPushButton#cancelBtn:hover { background: #E2E8F0; }
 
 /* ===== 导航 ===== */
 #navFrame {
@@ -537,12 +588,36 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
 /* ===== 工具提示 ===== */
 QToolTip {
-    background-color: #1E293B;
-    color: #FFFFFF;
-    border: none;
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E1;
     border-radius: 5px;
     padding: 6px 10px;
     font-size: 11px;
+}
+
+/* ===== 菜单（托盘右键菜单/下拉菜单） ===== */
+QMenu {
+    background-color: #FFFFFF;
+    color: #1E293B;
+    border: 1px solid #E2E8F0;
+    padding: 6px;
+}
+QMenu::item {
+    padding: 6px 26px 6px 12px;
+    border-radius: 4px;
+}
+QMenu::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+QMenu::item:disabled {
+    color: #94A3B8;
+}
+QMenu::separator {
+    height: 1px;
+    background: #E2E8F0;
+    margin: 4px 8px;
 }
 
 /* ===== 分割线 ===== */
@@ -967,6 +1042,7 @@ DARK_STYLESHEET = """
 /* 卡片背景: #2A2A3E */
 
 QMainWindow { background-color: #1E1E2E; }
+#centralWidget { background-color: #1E1E2E; }
 QDialog {
     background-color: #2A2A3E;
     color: #E2E8F0;
@@ -1017,9 +1093,54 @@ QPushButton#titleBarCloseBtn {
 QPushButton#titleBarCloseBtn:hover {
     background: #DC2626; color: #FFFFFF;
 }
+QPushButton#titleBarFullscreenBtn {
+    background: #3B3B5C; border: 1px solid #4F4F78; color: #A5B4FC;
+}
+QPushButton#titleBarFullscreenBtn:hover {
+    background: #46466B; border-color: #818CF8; color: #C7D2FE;
+}
 QLabel#statusLabel {
     color: #94A3B8;
 }
+
+/* 全屏模式：无声提示层（深色） */
+#fullscreenTip {
+    background-color: rgba(30, 30, 46, 0.94);
+    color: #F1F5F9; font-size: 13px; font-weight: 600;
+    border: 1px solid #4F4F78; border-radius: 8px; padding: 12px 20px;
+}
+/* 全屏模式：退出确认对话框（深色） */
+QDialog#fullscreenConfirmDlg {
+    background-color: #1E1E2E; border: 1px solid #3A3A52; border-radius: 8px;
+}
+QLabel#fullscreenConfirmMsg { color: #F1F5F9; }
+QLabel#fullscreenConfirmHint { color: #94A3B8; }
+/* 无声自绘 Toast（深色下与浅色一致，深色胶囊 + 白字仍清晰） */
+#toast {
+    background-color: rgba(26, 28, 44, 0.97);
+    border: 1px solid #4F4F78;
+    border-radius: 8px;
+}
+QLabel#toastText {
+    color: #F1F5F9; font-size: 12px;
+}
+QLabel#toastIcon {
+    font-size: 13px; font-weight: bold;
+}
+QLabel#toastIcon[kind="info"] { color: #93C5FD; }
+QLabel#toastIcon[kind="success"] { color: #4ADE80; }
+QLabel#toastIcon[kind="warning"] { color: #FBBF24; }
+QLabel#toastIcon[kind="error"] { color: #F87171; }
+QPushButton#primaryBtn {
+    background: #4F6EF7; color: #FFFFFF; border: none; border-radius: 4px;
+    padding: 5px 12px; font-size: 12px; font-weight: 600;
+}
+QPushButton#primaryBtn:hover { background: #4338CA; }
+QPushButton#cancelBtn {
+    background: #2A2A3E; color: #E2E8F0; border: 1px solid #3A3A52;
+    border-radius: 4px; padding: 5px 12px; font-size: 12px;
+}
+QPushButton#cancelBtn:hover { background: #363650; }
 
 #navFrame {
     background-color: #2A2A3E;
@@ -1546,6 +1667,24 @@ QToolTip {
     border-radius: 5px;
     padding: 6px 10px;
     font-size: 11px;
+}
+
+/* 菜单深色覆盖：背景随主题联动，文字用浅色保证对比（避免深底深字） */
+QMenu {
+    background-color: #262638;
+    color: #E2E8F0;
+    border: 1px solid #3A3A52;
+    padding: 6px;
+}
+QMenu::item:selected {
+    background-color: #3A3A52;
+    color: #FFFFFF;
+}
+QMenu::item:disabled {
+    color: #6B6B87;
+}
+QMenu::separator {
+    background: #3A3A52;
 }
 
 #divider { background-color: #3A3A52; min-height: 1px; max-height: 1px; }

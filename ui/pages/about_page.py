@@ -1,5 +1,5 @@
 """作者信息页"""
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QDialog, QTextEdit, QPushButton, QHBoxLayout, QApplication, QMessageBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QDialog, QTextEdit, QPushButton, QHBoxLayout, QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QGuiApplication
 import logging
@@ -8,6 +8,7 @@ import sys
 import traceback
 
 from config import APP_VERSION, APP_DISPLAY_NAME
+from ui.widgets.toast import show_toast
 
 
 class LogDialog(QDialog):
@@ -325,4 +326,4 @@ class AboutPage(QWidget):
     def _copy_text(self, text: str):
         """复制文本到剪贴板"""
         QGuiApplication.clipboard().setText(text)
-        QMessageBox.information(self, "已复制", "更新链接已复制到剪贴板！")
+        show_toast(self, "更新链接已复制到剪贴板！", "success")
